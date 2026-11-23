@@ -1,6 +1,6 @@
 "use client";
 
-import { addressUrl, checkoutAbi, txUrl } from "@aevum-kit/aevum";
+import { addressUrl, checkoutAbi, invoiceCheckoutAbi, txUrl } from "@aevum-kit/aevum";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { formatUnits, isHash, isHex, parseEventLogs, parseUnits, type Hex } from "viem";
@@ -36,6 +36,11 @@ export default function ReceiptPage() {
     chainId: appChain.id,
     query: { enabled: validOrder && Boolean(checkoutAddress) },
   });
+  const invoice = useReadContract({
+    address: checkoutAddress, abi: invoiceCheckoutAbi, functionName: "invoiceOf",
+    args: validOrder ? [orderId as Hex] : undefined, chainId: appChain.id,
+    query: { enabled: validOrder && Boolean(checkoutAddress) },
+  });
   const receipt = useTransactionReceipt({ hash: tx, chainId: appChain.id, query: { enabled: Boolean(tx) } });
 
   if (!validOrder) {
@@ -51,7 +56,8 @@ export default function ReceiptPage() {
   const paid = Boolean(p && p.payer !== ZERO);
   // Anyone can call pay(orderId, amount) with any amount, so "paid" alone proves nothing.
   // Check the amount against what the order costs before you treat it as settled.
-  const expected = parseUnits(priceOf(orderId as Hex), token.decimals);
+  // Prefer the amount registered on chain for this invoice; fall back to the app invoice model.
+  const expected = invoice.data?.exists ? invoice.data.amount : parseUnits(priceOf(orderId as Hex), token.decimals);
   const fullyPaid = paid && p!.amount === expected;
   // Only show transaction details if that transaction really emitted Paid for this order.
   const paidLog =

@@ -1,6 +1,6 @@
 "use client";
 
-import { authorizationWindow, checkoutAbi, checkoutTypedData, erc20Abi, txUrl } from "@aevum-kit/aevum";
+import { authorizationWindow, checkoutAbi, checkoutTypedData, erc20Abi, invoiceCheckoutAbi, txUrl } from "@aevum-kit/aevum";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -11,7 +11,7 @@ import { CheckIcon } from "@/components/Icons";
 import { useToken } from "@/components/useToken";
 import { useNetwork } from "@/lib/network";
 import { explain } from "@/lib/errors";
-import { demoOrder, newOrderId, orderLabel, short } from "@/lib/order";
+import { demoOrder, invoiceOf, newInvoice, newOrderId, orderLabel, short } from "@/lib/order";
 
 type Mode = "gasless" | "standard";
 type Phase = "idle" | "working" | "done" | "error";
@@ -47,7 +47,22 @@ export default function CheckoutPage() {
   const [txHash, setTxHash] = useState<Hash | null>(null);
   const [block, setBlock] = useState<bigint | null>(null);
 
-  useEffect(() => setOrderId(newOrderId()), []);
+  const [invoiceReady, setInvoiceReady] = useState(false);
+  useEffect(() => { const inv = newInvoice(); setOrderId(inv.orderId); }, []);
+
+  /** Step 0 of the invoice flow: the merchant registers the invoice on chain.
+   *  Amount comes from the invoice model (invoiceOf), not from payer input.
+   *  If the connected wallet is not the merchant, the contract reverts OnlyMerchant. */
+  async function createInvoiceOnChain() {
+    if (!address || !checkoutAddress || !orderId) return;
+    setError(null); setPhase("working");
+    try {
+      const invAmount = parseUnits(invoiceOf(orderId).total, token.decimals);
+      const hash = await writeContract(config, { address: checkoutAddress, abi: invoiceCheckoutAbi, functionName: "createInvoice", args: [orderId, invAmount], chainId: appChain.id });
+      await waitForTransactionReceipt(config, { hash, chainId: appChain.id });
+      setInvoiceReady(true); setPhase("idle");
+    } catch (e) { setError(explain(e)); setPhase("error"); }
+  }
 
   const relay = useQuery({
     queryKey: ["relay-status", appChain.id],
@@ -178,9 +193,9 @@ export default function CheckoutPage() {
     <main className="shell">
       <div className="page-head">
         <div>
-          <p className="eyebrow">Example · Checkout.sol</p>
-          <h1>Pay with tUSD8</h1>
-          <p className="lede">A neutral checkout you can turn into an invoice, a payroll run or a crowdfund pledge. Try both payment modes.</p>
+          <p className="eyebrow">InvoiceRail · InvoiceCheckout.sol</p>
+          <h1>Pay an invoice with tUSD8</h1>
+          <p className="lede">Create invoice → pay exact registered amount → Paid event is the receipt. Unregistered or wrong-amount payments revert on chain.</p>
         </div>
       </div>
 
@@ -293,8 +308,13 @@ export default function CheckoutPage() {
             </div>
           )}
 
+          {!invoiceReady && (
+            <button type="button" className="btn big block" disabled={!onChain || !checkoutAddress || busy} onClick={createInvoiceOnChain}>
+              1. Create invoice (merchant registers amount on chain)
+            </button>
+          )}
           <button type="button" className="btn big block" disabled={ctaDisabled} onClick={onPay}>
-            {cta}
+            {invoiceReady ? `2. ${cta}` : cta}
           </button>
           <p className="fine">
             {mode === "gasless"
