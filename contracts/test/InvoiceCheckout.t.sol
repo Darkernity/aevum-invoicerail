@@ -126,4 +126,84 @@ contract InvoiceCheckoutTest is Test {
         vm.expectRevert(abi.encodeWithSelector(InvoiceCheckout.UnknownInvoice.selector, unknown));
         checkout.payWithAuthorization(unknown, buyer, PRICE, 0, deadline, v, r, s);
     }
+
+    // ---- Post-deployment regression tests (added 2026-11-24, review F-12; contract source unchanged) ----
+
+    function _signWith(uint256 key, bytes32 orderId, uint256 value, uint256 validBefore)
+        internal view returns (uint8 v, bytes32 r, bytes32 s)
+    {
+        Signing.Auth memory a = Signing.Auth({
+            from: buyer, to: address(checkout), value: value, validAfter: 0,
+            validBefore: validBefore, nonce: checkout.authorizationNonce(orderId)
+        });
+        return Signing.signReceive(vm, key, token.DOMAIN_SEPARATOR(), a);
+    }
+
+    function test_gasless_recordsPayment() public {
+        uint256 deadline = block.timestamp + 1 hours;
+        (uint8 v, bytes32 r, bytes32 s) = _sign(ORDER, PRICE, deadline);
+        vm.prank(relayer);
+        checkout.payWithAuthorization(ORDER, buyer, PRICE, 0, deadline, v, r, s);
+        assertEq(token.balanceOf(merchant), PRICE);
+        assertTrue(checkout.isPaid(ORDER));
+        InvoiceCheckout.Payment memory p = checkout.paymentOf(ORDER);
+        assertEq(p.payer, buyer);
+        assertEq(p.amount, PRICE);
+        assertEq(p.paidAt, uint64(block.timestamp));
+    }
+
+    function test_gasless_revertsInvalidSignature() public {
+        (, uint256 malloryKey) = makeAddrAndKey("mallory");
+        uint256 deadline = block.timestamp + 1 hours;
+        (uint8 v, bytes32 r, bytes32 s) = _signWith(malloryKey, ORDER, PRICE, deadline);
+        vm.prank(relayer);
+        vm.expectRevert(MockUSD8.InvalidSignature.selector);
+        checkout.payWithAuthorization(ORDER, buyer, PRICE, 0, deadline, v, r, s);
+        assertFalse(checkout.isPaid(ORDER));
+    }
+
+    function test_gasless_revertsExpiredAuthorization() public {
+        vm.warp(1_000_000);
+        uint256 expired = block.timestamp - 1;
+        (uint8 v, bytes32 r, bytes32 s) = _sign(ORDER, PRICE, expired);
+        vm.prank(relayer);
+        vm.expectRevert(MockUSD8.AuthorizationExpired.selector);
+        checkout.payWithAuthorization(ORDER, buyer, PRICE, 0, expired, v, r, s);
+        assertFalse(checkout.isPaid(ORDER));
+    }
+
+    function test_crossPath_payThenGaslessRevertsAlreadyPaid() public {
+        vm.startPrank(buyer);
+        token.approve(address(checkout), PRICE);
+        checkout.pay(ORDER, PRICE);
+        vm.stopPrank();
+        uint256 deadline = block.timestamp + 1 hours;
+        (uint8 v, bytes32 r, bytes32 s) = _sign(ORDER, PRICE, deadline);
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(InvoiceCheckout.AlreadyPaid.selector, ORDER));
+        checkout.payWithAuthorization(ORDER, buyer, PRICE, 0, deadline, v, r, s);
+    }
+
+    function test_crossPath_gaslessThenPayRevertsAlreadyPaid() public {
+        uint256 deadline = block.timestamp + 1 hours;
+        (uint8 v, bytes32 r, bytes32 s) = _sign(ORDER, PRICE, deadline);
+        vm.prank(relayer);
+        checkout.payWithAuthorization(ORDER, buyer, PRICE, 0, deadline, v, r, s);
+        vm.startPrank(buyer);
+        token.approve(address(checkout), PRICE);
+        vm.expectRevert(abi.encodeWithSelector(InvoiceCheckout.AlreadyPaid.selector, ORDER));
+        checkout.pay(ORDER, PRICE);
+        vm.stopPrank();
+    }
+
+    function test_pay_transferFailureLeavesNoResidue() public {
+        // No approve: safeTransferFrom fails, the whole payment must roll back
+        // with no Paid record left behind.
+        vm.prank(buyer);
+        vm.expectRevert();
+        checkout.pay(ORDER, PRICE);
+        assertFalse(checkout.isPaid(ORDER));
+        assertEq(checkout.paymentOf(ORDER).payer, address(0));
+        assertEq(token.balanceOf(merchant), 0);
+    }
 }

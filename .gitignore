@@ -8,6 +8,13 @@ next-env.d.ts
 !.env.example
 !**/.env.example
 
+# wallet secrets: never commit key material (test wallets included)
+test-wallet.txt
+keystore-password.txt
+*-wallet.txt
+*.keystore
+keystores/
+
 # foundry
 contracts/out/
 contracts/cache/
