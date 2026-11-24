@@ -98,3 +98,9 @@ orderId 0xfb949ac0f76a4f84a19c36019926b9c1f745f87d51e11b7aecb3d3169eb8931c = kec
 - **Receipt status 0 (failed), gasUsed 26548**; eth_call simulation returns WrongAmount(orderId, 750000, 740000); isPaid(#5) -> false. The headline guarantee "wrong amount always rolls back" is now proven on the target chain, not only on a fork.
 
 Full run log: supplementary-evidence-2026-11-24.log in the build folder.
+
+## Source ↔ bytecode correspondence (2026-11-24, review F-13/F-15)
+
+- **Explorer source verification: PASSED.** Submitted via `forge verify-contract` (Blockscout verifier); the explorer now reports the contract as verified — InvoiceCheckout, solc v0.8.24+commit.e11b9ed9, full 124-line source on the address page: https://explorer-test.qday.info/address/0x35492621EFA400792010757D443dE65dB80A79a0
+- **Independent local rebuild comparison:** runtime bytecode rebuilt from the committed source is 2365 bytes, identical in length to the on-chain code; every differing byte lies inside the two immutable slots and equals exactly the constructor values (token 0x456569838f1d43009A91ebA4263147Afd7233483, merchant 0x502D17a8cd1b9024Eab9A036F1EFcD2d48d51b64). No other differences.
+- **Clean-checkout `make check`:** a fresh clone of the post-review commit (4c1ffaa, contract source identical to deployed 57c9426) + submodule init + `make install` + `make check` → exit 0: unit 28/28, fork 4/4, typecheck clean. Log: check-clean-checkout.log in the build folder. (The clone was taken from the local repo; the same commit is the one pending publication to the public GitHub repo.)
